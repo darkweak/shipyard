@@ -1,0 +1,59 @@
+# Shipyard on Docker Swarm.
+#
+# Shipyard runs on a manager node (it needs `docker stack deploy`) and talks to
+# that node's daemon through the socket. Images it builds are pushed to the
+# registry below, published on port 5000 of every node through the routing
+# mesh: each node pulls 127.0.0.1:5000/… , which Docker allows over plain HTTP
+# because it is a loopback address.
+#
+#   docker build -t shipyard:latest .                 # on the manager
+#   printf '%s' "$(openssl rand -hex 24)" | docker secret create shipyard_token -
+#   docker stack deploy -c deploy/stack.yml shipyard
+#
+# With several managers, pin Shipyard to the one holding the image and volume:
+#   node.hostname == <manager-hostname>
+
+version: "3.8"
+
+services:
+  shipyard:
+    image: shipyard:latest
+    environment:
+      SHIPYARD_TOKEN_FILE: /run/secrets/shipyard_token
+      SHIPYARD_TARGET: swarm
+      SHIPYARD_REGISTRY: 127.0.0.1:5000
+      SHIPYARD_MAX_CONCURRENT_BUILDS: "2"
+    ports:
+      - "8080:8080"
+    volumes:
+      - shipyard-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets:
+      - shipyard_token
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+
+  registry:
+    image: registry:2
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+volumes:
+  shipyard-data:
+  registry-data:
+
+secrets:
+  shipyard_token:
+    external: true

@@ -1,0 +1,19 @@
+services:
+  shipyard:
+    build: .
+    image: shipyard:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Required: the admin token used to sign in to the UI.
+      SHIPYARD_TOKEN: ${SHIPYARD_TOKEN:?set SHIPYARD_TOKEN}
+      SHIPYARD_MAX_CONCURRENT_BUILDS: "2"
+    volumes:
+      - shipyard-data:/data
+      # Shipyard builds and runs containers on the host's Docker daemon.
+      # This grants it root-equivalent access to the host: keep the UI private.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  shipyard-data:
