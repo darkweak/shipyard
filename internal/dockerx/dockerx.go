@@ -83,6 +83,8 @@ type RunOptions struct {
 	Network       string
 	Env           map[string]string
 	Labels        map[string]string
+	// Volumes are "name:/path" mounts (named volumes are created on first use).
+	Volumes []string
 	// WorkDir receives the temporary env file (kept out of argv).
 	WorkDir string
 }
@@ -97,6 +99,9 @@ func (d *Docker) Run(ctx context.Context, o RunOptions) (string, error) {
 	}
 	if o.Network != "" {
 		args = append(args, "--network", o.Network)
+	}
+	for _, v := range o.Volumes {
+		args = append(args, "-v", v)
 	}
 	if len(o.Env) > 0 {
 		f := filepath.Join(o.WorkDir, "container.env")
@@ -119,6 +124,12 @@ func (d *Docker) Remove(ctx context.Context, name string) error {
 	if err != nil && strings.Contains(err.Error(), "No such container") {
 		return nil
 	}
+	return err
+}
+
+// RemoveVolume deletes a named volume; a missing volume is not an error.
+func (d *Docker) RemoveVolume(ctx context.Context, name string) error {
+	_, err := d.output(ctx, "volume", "rm", "-f", name)
 	return err
 }
 

@@ -39,6 +39,15 @@ func TestStackFile(t *testing.T) {
 		t.Errorf("compose: %s", b)
 	}
 
+	if len(svc.Volumes) != 0 || f.Volumes != nil {
+		t.Errorf("only Netlify projects get a blobs volume: %+v", svc.Volumes)
+	}
+	p.BuildType = store.BuildNetlify
+	f = m.stackFile(p, "x", "d1", 8080)
+	if v := f.Services["app"].Volumes; len(v) != 1 || v[0] != "data0:/blobs" || f.Volumes["data0"].Name != "shipyard-site-blobs" {
+		t.Errorf("blobs volume: %+v %+v", v, f.Volumes)
+	}
+
 	m.opts.Registry = "127.0.0.1:5000"
 	if got := m.stackFile(p, "x", "d1", 8080).Services["app"].Deploy.Placement.Constraints; len(got) != 1 {
 		t.Errorf("with a registry, no pinning: %v", got)

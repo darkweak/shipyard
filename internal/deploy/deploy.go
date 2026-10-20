@@ -84,6 +84,17 @@ func ContainerName(p *store.Project) string { return "shipyard-" + p.Slug }
 func StackName(p *store.Project) string     { return "shipyard-" + p.Slug }
 func ServiceName(p *store.Project) string   { return StackName(p) + "_app" }
 
+// BlobsVolume holds a Netlify project's Netlify Blobs, kept across deployments.
+func BlobsVolume(p *store.Project) string { return "shipyard-" + p.Slug + "-blobs" }
+
+// volumes are the "name:/path" mounts of a project's container.
+func volumes(p *store.Project) []string {
+	if p.BuildType == store.BuildNetlify {
+		return []string{BlobsVolume(p) + ":" + netlify.BlobsDir}
+	}
+	return nil
+}
+
 func (m *Manager) ImageRepo(p *store.Project) string {
 	if m.opts.Registry != "" {
 		return strings.TrimSuffix(m.opts.Registry, "/") + "/shipyard-" + p.Slug
@@ -546,7 +557,7 @@ func (m *Manager) swap(ctx context.Context, r *runner, p *store.Project, contain
 	}
 	id, err := m.docker.Run(ctx, dockerx.RunOptions{
 		Name: name, Image: r.d.Image, HostPort: p.HostPort, ContainerPort: containerPort,
-		Network: p.Network, Env: p.Env, Labels: labels, WorkDir: dir,
+		Network: p.Network, Env: p.Env, Labels: labels, Volumes: volumes(p), WorkDir: dir,
 	})
 	if err != nil {
 		return "", restore(err)

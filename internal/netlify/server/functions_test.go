@@ -31,7 +31,8 @@ func TestFunctionsEndToEnd(t *testing.T) {
 		"runtime.mjs": string(runtime),
 		"manifest.json": `{"functions":[{"name":"hello","file":"hello.mjs"},{"name":"items","file":"items.mjs"},
 			{"name":"page","file":"page.mjs"},{"name":"job-background","file":"job-background.mjs"},
-			{"name":"cron","file":"cron.mjs","schedule":"@daily"},{"name":"legacy","file":"legacy.mjs"}]}`,
+			{"name":"cron","file":"cron.mjs","schedule":"@daily"},{"name":"legacy","file":"legacy.mjs"},
+			{"name":"blob","file":"blob.mjs"}]}`,
 		"hello.mjs": `export const handler = async (event) => ({ statusCode: 200, headers: {"content-type": "application/json"},
 			body: JSON.stringify({ path: event.path, q: event.queryStringParameters, ip: event.headers["x-nf-client-connection-ip"] }) })`,
 		"items.mjs": `export default async (req, context) => Response.json({ id: context.params.id, url: new URL(req.url).pathname, method: req.method })
@@ -40,6 +41,13 @@ func TestFunctionsEndToEnd(t *testing.T) {
 		"job-background.mjs": `import { writeFileSync } from "node:fs"; export const handler = async () => { writeFileSync(` + jsString(marker) + `, "done"); return { statusCode: 200 } }`,
 		"cron.mjs":           `export default async () => new Response("cron")`,
 		// esbuild's ESM wrapping of a CommonJS module: the handler is on the default export.
+		// What @netlify/blobs does with NETLIFY_BLOBS_CONTEXT (see blobs_test.go for the protocol).
+		"blob.mjs": `export default async () => {
+			const c = JSON.parse(Buffer.from(process.env.NETLIFY_BLOBS_CONTEXT, "base64").toString())
+			const url = c.edgeURL + "/" + c.siteID + "/site:s/k", headers = { authorization: "Bearer " + c.token }
+			await fetch(url, { method: "PUT", headers, body: "stored" })
+			return new Response(await (await fetch(url, { headers })).text())
+		}`,
 		"legacy.mjs": `const require_legacy = { handler: (event, context, callback) => callback(null, { statusCode: 200, body: "cjs:" + context.functionName }) }; export default require_legacy;`,
 	}
 	for name, content := range files {
@@ -55,6 +63,15 @@ func TestFunctionsEndToEnd(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 	l.Close()
 	fn := newFunctions(node, filepath.Join(fnDir, "runtime.mjs"), port)
+	b, err := newBlobs(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobsCtx, err := b.start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn.env = []string{"NETLIFY_BLOBS_CONTEXT=" + blobsCtx}
 	go fn.run(ctx)
 	if err := fn.waitReady(ctx, 20*time.Second); err != nil {
 		t.Fatal(err)
@@ -111,6 +128,9 @@ func TestFunctionsEndToEnd(t *testing.T) {
 	}
 	if status, body = call("GET", "/.netlify/functions/legacy"); body != "cjs:legacy" {
 		t.Errorf("CommonJS handler: %d %s", status, body)
+	}
+	if status, body = call("GET", "/.netlify/functions/blob"); body != "stored" {
+		t.Errorf("blobs: %d %s", status, body)
 	}
 	if status, _ = call("POST", "/.netlify/functions/job-background"); status != 202 {
 		t.Errorf("background: got %d", status)

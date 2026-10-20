@@ -197,7 +197,7 @@ external_node_modules = ["pg-native"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"linux-${arch}-" + EsbuildVersion, "FROM node AS runtime", `"-functions", "/app/.netlify-functions/runtime.mjs"`, `COMMIT_REF="c0ffee"`} {
+	for _, want := range []string{"linux-${arch}-" + EsbuildVersion, "FROM node AS runtime", `"-functions", "/app/.netlify-functions/runtime.mjs"`, `"-blobs", "/blobs"`, "chown node:node /blobs", `COMMIT_REF="c0ffee"`} {
 		if !strings.Contains(df, want) {
 			t.Errorf("Dockerfile lacks %q:\n%s", want, df)
 		}
@@ -212,7 +212,9 @@ external_node_modules = ["pg-native"]
 	if !strings.Contains(string(manifest), `"schedule": "@daily"`) {
 		t.Errorf("manifest: %s", manifest)
 	}
-	if _, err := os.Stat(filepath.Join(dir, Dir, "functions", "runtime.mjs")); err != nil {
-		t.Error("runtime.mjs not written")
+	for _, f := range []string{"functions/runtime.mjs", "server/blobs.go"} {
+		if _, err := os.Stat(filepath.Join(dir, Dir, f)); err != nil {
+			t.Errorf("%s not written", f)
+		}
 	}
 }

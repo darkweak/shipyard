@@ -65,6 +65,24 @@ test('v1 handler: callback style, binary bodies, base64 responses', async () => 
   assert.deepEqual(event.multiValueQueryStringParameters, { x: ['1', '2'] })
 })
 
+test('v1 handler: Netlify Blobs context for connectLambda()', async () => {
+  let event
+  const fn = { name: 'b', kind: 'v1', handler: async (e) => ((event = e), { statusCode: 200 }) }
+  const ctx = { edgeURL: 'http://127.0.0.1:1', siteID: 'shipyard', token: 't', deployID: 'd1', primaryRegion: 'local' }
+  process.env.NETLIFY_BLOBS_CONTEXT = Buffer.from(JSON.stringify(ctx)).toString('base64')
+  try {
+    await invoke(fn, req())
+  } finally {
+    delete process.env.NETLIFY_BLOBS_CONTEXT
+  }
+  assert.deepEqual(JSON.parse(Buffer.from(event.blobs, 'base64').toString()), { url: ctx.edgeURL, token: 't', primaryRegion: 'local' })
+  assert.equal(event.headers['x-nf-site-id'], 'shipyard')
+  assert.equal(event.headers['x-nf-deploy-id'], 'd1')
+
+  await invoke(fn, req())
+  assert.equal(event.blobs, undefined)
+})
+
 test('v1 handler returning nothing is an error', async () => {
   await assert.rejects(invoke({ name: 'x', kind: 'v1', handler: async () => {} }, req()), /instead of a response object/)
 })

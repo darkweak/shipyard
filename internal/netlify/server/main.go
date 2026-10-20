@@ -32,6 +32,7 @@ func main() {
 	fnScript := flag.String("functions", "", "Netlify Functions runtime script (empty: no functions)")
 	node := flag.String("node", "node", "Node.js binary running the functions")
 	fnPort := flag.Int("functions-port", 9999, "loopback port of the functions runtime")
+	blobsDir := flag.String("blobs", "", "Netlify Blobs storage directory for functions (empty: no blobs)")
 	flag.Parse()
 
 	cfg, err := loadConfig(*root, *cfgPath)
@@ -47,6 +48,17 @@ func main() {
 	s := &site{root: *root, cfg: cfg}
 	if *fnScript != "" {
 		s.fn = newFunctions(*node, *fnScript, *fnPort)
+		if *blobsDir != "" {
+			b, err := newBlobs(*blobsDir)
+			if err != nil {
+				log.Fatalf("blobs: %v", err)
+			}
+			blobsCtx, err := b.start()
+			if err != nil {
+				log.Fatalf("blobs: %v", err)
+			}
+			s.fn.env = append(s.fn.env, "NETLIFY_BLOBS_CONTEXT="+blobsCtx)
+		}
 		go s.fn.run(fnCtx)
 		if err := s.fn.waitReady(ctx, 60*time.Second); err != nil {
 			log.Printf("warning: %v", err)

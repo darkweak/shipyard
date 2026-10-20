@@ -24,6 +24,7 @@ type functions struct {
 	script string
 	node   string
 	port   int
+	env    []string // extra environment for the runtime
 	names  map[string]bool
 	routes []fnRoute
 	proxy  *httputil.ReverseProxy
@@ -70,7 +71,7 @@ func (f *functions) run(ctx context.Context) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		cmd := exec.CommandContext(ctx, f.node, f.script)
-		cmd.Env = append(os.Environ(), "SHIPYARD_FUNCTIONS_PORT="+strconv.Itoa(f.port))
+		cmd.Env = append(append(os.Environ(), f.env...), "SHIPYARD_FUNCTIONS_PORT="+strconv.Itoa(f.port))
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		start := time.Now()
 		err := cmd.Run()

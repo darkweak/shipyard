@@ -20,7 +20,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-//go:embed server/main.go server/rules.go server/functions.go functions/runtime.mjs
+//go:embed server/main.go server/rules.go server/functions.go server/blobs.go functions/runtime.mjs
 var embedded embed.FS
 
 const (
@@ -35,6 +35,9 @@ const (
 	ServerPort = 8080
 	// Dir is the directory Shipyard writes its generated files to, inside the build context.
 	Dir = ".shipyard"
+	// BlobsDir is where images with functions store Netlify Blobs; mount a
+	// volume there to keep them across deployments.
+	BlobsDir = "/blobs"
 )
 
 // ---- netlify.toml ----
@@ -467,7 +470,7 @@ func Write(p *Plan, contextDir string, meta Meta) (string, error) {
 	if err := os.MkdirAll(filepath.Join(out, "server"), 0o755); err != nil {
 		return "", err
 	}
-	for _, name := range []string{"main.go", "rules.go", "functions.go"} {
+	for _, name := range []string{"main.go", "rules.go", "functions.go", "blobs.go"} {
 		src, err := embedded.ReadFile("server/" + name)
 		if err != nil {
 			return "", err
@@ -666,11 +669,12 @@ COPY --from=build /out /site
 COPY --from=build /out-app /app
 COPY ` + Dir + `/functions/ /app/.netlify-functions/
 COPY ` + Dir + `/netlify.json /netlify.json
+RUN mkdir -p ` + BlobsDir + ` && chown node:node ` + BlobsDir + `
 WORKDIR /app
 `)
 	fmt.Fprintf(&b, "ENV NODE_ENV=production NETLIFY=true CONTEXT=production SITE_NAME=%s BRANCH=%s COMMIT_REF=%s DEPLOY_ID=%s BUILD_ID=%s\n",
 		strconv.Quote(meta.SiteName), strconv.Quote(meta.Branch), strconv.Quote(meta.Commit), strconv.Quote(meta.DeployID), strconv.Quote(meta.DeployID))
-	fmt.Fprintf(&b, "USER node\nEXPOSE %d\nENTRYPOINT [\"netlify-server\", \"-addr\", \":%d\", \"-root\", \"/site\", \"-config\", \"/netlify.json\", \"-functions\", \"/app/.netlify-functions/runtime.mjs\"]\n", ServerPort, ServerPort)
+	fmt.Fprintf(&b, "USER node\nEXPOSE %d\nENTRYPOINT [\"netlify-server\", \"-addr\", \":%d\", \"-root\", \"/site\", \"-config\", \"/netlify.json\", \"-functions\", \"/app/.netlify-functions/runtime.mjs\", \"-blobs\", %q]\n", ServerPort, ServerPort, BlobsDir)
 	return b.String()
 }
 

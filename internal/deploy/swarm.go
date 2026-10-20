@@ -27,6 +27,7 @@ type stackFile struct {
 	Version  string                     `json:"version"`
 	Services map[string]stackService    `json:"services"`
 	Networks map[string]stackExtNetwork `json:"networks,omitempty"`
+	Volumes  map[string]stackVolume     `json:"volumes,omitempty"`
 }
 
 type stackService struct {
@@ -35,6 +36,7 @@ type stackService struct {
 	Ports       []stackPort       `json:"ports,omitempty"`
 	Networks    []string          `json:"networks,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
+	Volumes     []string          `json:"volumes,omitempty"`
 	Deploy      stackDeploy       `json:"deploy"`
 }
 
@@ -74,6 +76,12 @@ type stackRestart struct {
 
 type stackExtNetwork struct {
 	External bool `json:"external"`
+}
+
+// stackVolume pins the volume's name (instead of <stack>_<key>) so data
+// stays in the same volume whether the project runs as a container or a stack.
+type stackVolume struct {
+	Name string `json:"name"`
 }
 
 // escape protects literal "$" from compose variable interpolation.
@@ -130,7 +138,19 @@ func (m *Manager) stackFile(p *store.Project, image, deploymentID string, contai
 	if p.HostPort > 0 && containerPort > 0 {
 		svc.Ports = []stackPort{{Target: containerPort, Published: p.HostPort, Protocol: "tcp", Mode: "ingress"}}
 	}
-	f := stackFile{Version: "3.8", Services: map[string]stackService{"app": svc}}
+	// Named volumes are local to each node: replicas on different nodes
+	// don't share them.
+	f := stackFile{Version: "3.8"}
+	for i, v := range volumes(p) {
+		name, target, _ := strings.Cut(v, ":")
+		key := fmt.Sprintf("data%d", i)
+		svc.Volumes = append(svc.Volumes, key+":"+target)
+		if f.Volumes == nil {
+			f.Volumes = map[string]stackVolume{}
+		}
+		f.Volumes[key] = stackVolume{Name: name}
+	}
+	f.Services = map[string]stackService{"app": svc}
 	if p.Network != "" {
 		svc.Networks = []string{p.Network}
 		f.Services["app"] = svc
@@ -343,5 +363,11 @@ func (m *Manager) Remove(ctx context.Context, p *store.Project) error {
 	}
 	_ = m.docker.Remove(ctx, ContainerName(p)+"-previous")
 	m.docker.RemoveImages(ctx, m.ImageRepo(p))
+	// Best effort: a stack's tasks may still be shutting down, and on Swarm
+	// only this node's copy is removed.
+	for _, v := range volumes(p) {
+		name, _, _ := strings.Cut(v, ":")
+		_ = m.docker.RemoveVolume(ctx, name)
+	}
 	return nil
 }

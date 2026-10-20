@@ -151,9 +151,35 @@ export async function invoke(fn, inc, ms = SYNC_TIMEOUT_MS) {
   return fn.kind === 'v2' ? invokeV2(fn, inc, ms) : invokeV1(fn, inc, ms)
 }
 
+// Netlify Blobs: netlify-server passes NETLIFY_BLOBS_CONTEXT (which
+// @netlify/blobs reads by itself); Lambda-style events also carry it in the
+// shape connectLambda(event) expects.
+function blobsContext() {
+  try {
+    return JSON.parse(Buffer.from(process.env.NETLIFY_BLOBS_CONTEXT || '', 'base64').toString('utf8'))
+  } catch {
+    return null
+  }
+}
+
+function lambdaBlobs(single, multi) {
+  const ctx = blobsContext()
+  if (!ctx) return undefined
+  for (const [k, v] of [
+    ['x-nf-site-id', ctx.siteID],
+    ['x-nf-deploy-id', ctx.deployID || ''],
+  ]) {
+    single[k] = v
+    multi[k] = [v]
+  }
+  const data = { url: ctx.edgeURL, token: ctx.token, primaryRegion: ctx.primaryRegion }
+  return Buffer.from(JSON.stringify(data)).toString('base64')
+}
+
 async function invokeV1(fn, inc, ms) {
   const target = new URL(inc.path || inc.url.pathname + inc.url.search, inc.url)
   const { single, multi } = headerObject(inc.headers)
+  const blobs = lambdaBlobs(single, multi)
   const query = {}
   const multiQuery = {}
   for (const [k, v] of target.searchParams) {
@@ -174,6 +200,7 @@ async function invokeV1(fn, inc, ms) {
     body: inc.body.length ? (binary ? inc.body.toString('base64') : inc.body.toString('utf8')) : null,
     isBase64Encoded: binary,
   }
+  if (blobs) event.blobs = blobs
   const deadline = Date.now() + ms
   const context = {
     callbackWaitsForEmptyEventLoop: true,

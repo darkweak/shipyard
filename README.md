@@ -101,6 +101,15 @@ supervised by the static server in the same container:
 
 With functions, the runtime image is the site's Node.js image instead of distroless.
 
+**Netlify Blobs.** `@netlify/blobs` works unchanged in functions (`getStore`, `getDeployStore`, `listStores`,
+metadata, `onlyIfNew` / `onlyIfMatch`, ETag revalidation, `consistency: "strong"`, `list({ directories })`,
+`deleteAll`; Lambda-style handlers call `connectLambda(event)` as on Netlify). The static server answers the
+Blobs edge API on loopback and passes `NETLIFY_BLOBS_CONTEXT` to the runtime. Blobs are files in the
+`/blobs` directory of the container, on the named volume `shipyard-<slug>-blobs`: they survive redeploys and
+rollbacks, and are removed with the project. Blobs are limited to 64 MB each. On Swarm the volume is local to
+each node, so replicas on different nodes don't share blobs: pin the service to one node (placement
+constraint) or keep one replica. Data from Netlify isn't migrated: copy it with a function or a script.
+
 **Not supported** (reported as warnings in the form and the deployment log): Go/Rust functions, Edge
 Functions, streaming via `stream()` from `@netlify/functions` older APIs, `context.geo`, build plugins (for `@netlify/plugin-nextjs` use the Next.js
 template instead), `Country`/`Role` redirect conditions (those rules never match), signed proxies, Forms,
