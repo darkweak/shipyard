@@ -120,6 +120,12 @@ export type SystemInfo = {
   swarm?: { nodeId: string; nodes: number; managers: number }
 }
 
+export type Blob = { key: string; etag: string; size: number; modified: string; metadata?: Record<string, unknown> }
+export type BlobStore = { name: string; blobs: Blob[] }
+export type BlobsInfo = { enabled: boolean; reason?: string; volume: string; stores: BlobStore[] }
+
+export type Settings = { defaultEnv: Record<string, string>; defaultLabels: Record<string, string> }
+
 export type GitHubRepo = {
   fullName: string
   cloneUrl: string
@@ -170,6 +176,8 @@ export const api = {
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
   session: () => request<{ ok: boolean }>('GET', '/api/session'),
   system: () => request<SystemInfo>('GET', '/api/system'),
+  settings: () => request<Settings>('GET', '/api/settings'),
+  updateSettings: (s: Settings) => request<Settings>('PUT', '/api/settings', s),
 
   templates: () => request<Template[]>('GET', '/api/templates'),
   template: (id: string) => request<Template>('GET', `/api/templates/${id}`),
@@ -201,6 +209,12 @@ export const api = {
   containerAction: (id: string, action: 'start' | 'stop' | 'restart') =>
     request<ContainerState>('POST', `/api/projects/${id}/container/${action}`),
   containerLogs: (id: string, tail = 300) => request<{ logs: string }>('GET', `/api/projects/${id}/container/logs?tail=${tail}`),
+
+  blobs: (id: string) => request<BlobsInfo>('GET', `/api/projects/${id}/blobs`),
+  blobUrl: (id: string, store: string, key: string) =>
+    `/api/projects/${id}/blobs/content?${new URLSearchParams({ store, key })}`,
+  deleteBlob: (id: string, store: string, key?: string) =>
+    request<void>('DELETE', `/api/projects/${id}/blobs?${new URLSearchParams(key ? { store, key } : { store })}`),
 
   deployment: (id: string) => request<Deployment>('GET', `/api/deployments/${id}`),
   cancelDeployment: (id: string) => request<{ ok: boolean }>('POST', `/api/deployments/${id}/cancel`),

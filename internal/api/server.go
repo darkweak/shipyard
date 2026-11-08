@@ -49,6 +49,8 @@ func (s *Server) Handler() http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
 	api.HandleFunc("GET /api/system", s.system)
+	api.HandleFunc("GET /api/settings", s.getSettings)
+	api.HandleFunc("PUT /api/settings", s.updateSettings)
 
 	api.HandleFunc("GET /api/templates", s.listTemplates)
 	api.HandleFunc("POST /api/templates", s.createTemplate)
@@ -73,6 +75,9 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/projects/{id}/container", s.containerState)
 	api.HandleFunc("POST /api/projects/{id}/container/{action}", s.containerAction)
 	api.HandleFunc("GET /api/projects/{id}/container/logs", s.containerLogs)
+	api.HandleFunc("GET /api/projects/{id}/blobs", s.listBlobs)
+	api.HandleFunc("GET /api/projects/{id}/blobs/content", s.blobContent)
+	api.HandleFunc("DELETE /api/projects/{id}/blobs", s.deleteBlob)
 
 	api.HandleFunc("GET /api/deployments/{id}", s.getDeployment)
 	api.HandleFunc("GET /api/deployments/{id}/logs", s.streamDeploymentLogs)

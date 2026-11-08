@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { DirPicker, RepoPicker } from '@/components/pickers'
 import { api, type AuthType, type BuildType, type GitHubRepo, type Inspection, type RepoRequest, type NetlifyPlan, type Project, type ProjectInput, type Template } from '@/lib/api'
 import { useAsync } from '@/lib/hooks'
-import { navigate } from '@/lib/router'
+import { Link, navigate } from '@/lib/router'
 import { Button, Card, ErrorBox, Field, fromRows, Input, KeyValueEditor, PageHeader, Select, Spinner, Textarea, toRows } from '@/components/ui'
 
 type Form = Omit<ProjectInput, 'env' | 'labels'> & { env: [string, string][]; labels: [string, string][] }
@@ -78,6 +78,19 @@ export function ProjectFormPage({ id }: { id?: string }) {
     if (project) setForm(fromProject(project))
   }, [project])
 
+  // New projects start with the defaults from Settings.
+  const { data: settings } = useAsync(() => (editing ? Promise.resolve(undefined) : api.settings()), [editing])
+  useEffect(() => {
+    if (!settings) return
+    // Rows typed before the defaults loaded win over defaults with the same key.
+    const merge = (rows: [string, string][], defaults: Record<string, string>): [string, string][] => {
+      const typed = new Set(rows.map(([k]) => k.trim()))
+      return [...toRows(defaults).filter(([k]) => !typed.has(k)), ...rows.filter(([k, v]) => k.trim() || v)]
+    }
+    setForm((f) => ({ ...f, env: merge(f.env, settings.defaultEnv), labels: merge(f.labels, settings.defaultLabels) }))
+  }, [settings])
+  const hasDefaults = !!settings && (Object.keys(settings.defaultEnv).length > 0 || Object.keys(settings.defaultLabels).length > 0)
+
   // Pre-select a template from ?template=<id> (used by "Use template").
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('template')
@@ -126,7 +139,16 @@ export function ProjectFormPage({ id }: { id?: string }) {
 
       <BuildCard form={form} set={set} templates={templates} template={template} inspection={inspection} repo={repoRequest()} onDirPicked={(dir) => inspect({ buildContext: dir })} />
 
-      <Card title="Run">
+      <Card
+        title="Run"
+        actions={
+          hasDefaults && (
+            <Link href="/settings" className="text-xs text-muted hover:text-fg hover:underline">
+              Environment and labels pre-filled from Settings
+            </Link>
+          )
+        }
+      >
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
             <Field

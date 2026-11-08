@@ -1,7 +1,8 @@
-import { Copy, ExternalLink, GitBranch, Play, RefreshCw, Rocket, RotateCcw, Settings, Square, Trash2, Webhook } from 'lucide-react'
+import { Copy, Database, ExternalLink, GitBranch, Globe, Play, RefreshCw, Rocket, RotateCcw, Settings, Square, Trash2, Webhook } from 'lucide-react'
 import { useState } from 'react'
 import { api, isActive, type ContainerState, type Deployment, type Project } from '@/lib/api'
 import { duration, timeAgo, useAsync } from '@/lib/hooks'
+import { projectLinks } from '@/lib/links'
 import { Link, navigate } from '@/lib/router'
 import { Button, Card, Dot, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui'
 import { repoLabel } from './ProjectsPage'
@@ -30,6 +31,7 @@ export function ProjectPage({ id }: { id: string }) {
 
   const deploying = deployments.data?.some((d) => isActive(d.status))
   const liveId = deployments.data?.find((d) => d.status === 'succeeded')?.id
+  const links = projectLinks(project.labels, project.buildType)
 
   return (
     <>
@@ -42,6 +44,12 @@ export function ProjectPage({ id }: { id: string }) {
               <GitBranch className="size-3.5" />
               {project.branch}
             </span>
+            {links.map((url) => (
+              <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+                <Globe className="size-3.5" />
+                {url.replace(/^https:\/\//, '').replace(/\/$/, '')}
+              </a>
+            ))}
           </span>
         }
         actions={
@@ -88,6 +96,22 @@ export function ProjectPage({ id }: { id: string }) {
 
         <div className="space-y-5">
           <ContainerCard state={container.data} error={container.error} busy={busy} project={project} onAction={(a) => act(a, async () => container.setData(await api.containerAction(id, a)))} />
+          {project.buildType === 'netlify' && (
+            <Card
+              title={
+                <span className="inline-flex items-center gap-1.5">
+                  <Database className="size-4" /> Netlify Blobs
+                </span>
+              }
+            >
+              <p className="mb-3 text-xs text-muted">
+                Browse, download and delete what the site's functions stored with <span className="font-mono">@netlify/blobs</span>.
+              </p>
+              <Button size="sm" onClick={() => navigate(`/projects/${id}/blobs`)}>
+                Browse blobs
+              </Button>
+            </Card>
+          )}
           <WebhookCard project={project} onRotate={() => act('rotate', async () => setProject(await api.rotateWebhook(id)))} />
           <Card title="Danger zone">
             <p className="mb-3 text-sm text-muted">Deletes the project, its container and its images.</p>

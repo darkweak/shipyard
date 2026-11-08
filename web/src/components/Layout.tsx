@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { Boxes, FileCode2, LogOut, Ship } from 'lucide-react'
+import { Boxes, FileCode2, LogOut, Settings, Ship } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '@/lib/api'
 import { useAsync } from '@/lib/hooks'
@@ -9,6 +9,7 @@ import { Dot } from './ui'
 const nav = [
   { href: '/projects', label: 'Projects', icon: Boxes, match: (p: string) => p === '/' || p.startsWith('/projects') || p.startsWith('/deployments') },
   { href: '/templates', label: 'Templates', icon: FileCode2, match: (p: string) => p.startsWith('/templates') },
+  { href: '/settings', label: 'Settings', icon: Settings, match: (p: string) => p.startsWith('/settings') },
 ]
 
 export function Layout({ children, onLogout }: { children: ReactNode; onLogout: () => void }) {

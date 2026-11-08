@@ -109,6 +109,10 @@ Blobs edge API on loopback and passes `NETLIFY_BLOBS_CONTEXT` to the runtime. Bl
 rollbacks, and are removed with the project. Blobs are limited to 64 MB each. On Swarm the volume is local to
 each node, so replicas on different nodes don't share blobs: pin the service to one node (placement
 constraint) or keep one replica. Data from Netlify isn't migrated: copy it with a function or a script.
+The project page's **Browse blobs** opens a blob browser (like Netlify's Blobs UI): stores, folder-style
+navigation of keys, search, metadata, content preview (text, JSON, images, hex), download and delete. Shipyard
+reads the volume through a short-lived, network-less container of the live image, so it sees the copy on its
+own Docker host.
 
 **Not supported** (reported as warnings in the form and the deployment log): Go/Rust functions, Edge
 Functions, streaming via `stream()` from `@netlify/functions` older APIs, `context.geo`, build plugins (for `@netlify/plugin-nextjs` use the Next.js

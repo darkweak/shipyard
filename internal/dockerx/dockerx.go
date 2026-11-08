@@ -133,6 +133,43 @@ func (d *Docker) RemoveVolume(ctx context.Context, name string) error {
 	return err
 }
 
+// RunOnce runs a throwaway container from image with its entrypoint replaced
+// and no network, mounting volumes ("name:/path[:ro]"), and streams the
+// command's stdout to out. It's for poking at a project's volumes with the
+// tools its own image ships.
+func (d *Docker) RunOnce(ctx context.Context, image string, volumes []string, out io.Writer, entrypoint string, args ...string) error {
+	a := []string{"run", "--rm", "--network", "none", "--log-driver", "none", "--entrypoint", entrypoint}
+	for _, v := range volumes {
+		a = append(a, "-v", v)
+	}
+	a = append(a, image)
+	a = append(a, args...)
+	var stderr bytes.Buffer
+	c := d.cmd(ctx, a...)
+	c.Stdout, c.Stderr = out, &stderr
+	if err := c.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("docker run: %s", msg)
+	}
+	return nil
+}
+
+// ImageEntrypoint returns the image's configured entrypoint.
+func (d *Docker) ImageEntrypoint(ctx context.Context, image string) ([]string, error) {
+	out, err := d.output(ctx, "image", "inspect", "--format", "{{json .Config.Entrypoint}}", image)
+	if err != nil {
+		return nil, err
+	}
+	var ep []string
+	if err := json.Unmarshal([]byte(out), &ep); err != nil {
+		return nil, fmt.Errorf("docker image inspect: unexpected output")
+	}
+	return ep, nil
+}
+
 func (d *Docker) Rename(ctx context.Context, from, to string) error {
 	_, err := d.output(ctx, "rename", from, to)
 	return err
