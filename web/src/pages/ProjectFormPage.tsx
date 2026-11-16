@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { DirPicker, RepoPicker } from '@/components/pickers'
 import { api, type AuthType, type BuildType, type GitHubRepo, type Inspection, type RepoRequest, type NetlifyPlan, type Project, type ProjectInput, type Template } from '@/lib/api'
 import { useAsync } from '@/lib/hooks'
+import { isLockedTo, runningNodes, withLock } from '@/lib/placement'
 import { Link, navigate } from '@/lib/router'
 import { Button, Card, ErrorBox, Field, fromRows, Input, KeyValueEditor, PageHeader, Select, Spinner, Textarea, toRows } from '@/components/ui'
 
@@ -62,10 +63,12 @@ export function ProjectFormPage({ id }: { id?: string }) {
   const { data: templates } = useAsync(api.templates, [])
   const { data: sys } = useAsync(api.system, [])
   const swarm = sys?.target === 'swarm'
-  // Pins the service to the node Shipyard deploys from.
-  const serverName = sys?.swarm?.hostname ?? ''
-  const lockConstraint = serverName ? `node.labels.node_name == ${serverName}` : ''
   const { data: project, error: loadError } = useAsync(() => (id ? api.project(id) : Promise.resolve(undefined)), [id])
+  // Lock targets: the nodes running the service now, else (nothing deployed
+  // yet) the node Shipyard deploys from.
+  const { data: container } = useAsync(() => (id && swarm ? api.container(id) : Promise.resolve(undefined)), [id, swarm])
+  const running = runningNodes(container)
+  const lockNodes = running.length > 0 ? running : sys?.swarm?.hostname ? [sys.swarm.hostname] : []
   const [form, setForm] = useState<Form>(blank)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -194,19 +197,20 @@ export function ProjectFormPage({ id }: { id?: string }) {
                 hint={
                   <span className="flex flex-wrap items-center justify-between gap-2">
                     <span>One per line, e.g. node.labels.web == true or node.role == worker.</span>
-                    {lockConstraint && (
+                    {lockNodes.map((node) => (
                       <Button
+                        key={node}
                         type="button"
                         size="sm"
                         variant="ghost"
                         icon={<Lock className="size-3.5" />}
-                        disabled={form.placement.some((c) => c.replace(/\s+/g, '') === lockConstraint.replace(/\s+/g, ''))}
-                        title={`Adds ${lockConstraint}`}
-                        onClick={() => set('placement', [...form.placement.filter((c) => !/^\s*node\.labels\.node_name\s*==/.test(c) && c.trim()), lockConstraint])}
+                        disabled={isLockedTo(form.placement, node)}
+                        title={running.includes(node) ? `The service runs on ${node}` : `Nothing runs yet: ${node} is the node Shipyard deploys from`}
+                        onClick={() => set('placement', withLock(form.placement, node))}
                       >
-                        Lock to {serverName}
+                        Lock to {node}
                       </Button>
-                    )}
+                    ))}
                   </span>
                 }
               >

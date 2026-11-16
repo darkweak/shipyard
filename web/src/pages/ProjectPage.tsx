@@ -1,10 +1,11 @@
-import { Copy, Database, ExternalLink, GitBranch, Globe, Play, RefreshCw, Rocket, RotateCcw, Settings, Square, Trash2, Webhook } from 'lucide-react'
+import { Copy, Database, ExternalLink, GitBranch, Globe, Lock, Play, RefreshCw, Rocket, RotateCcw, Settings, Square, Trash2, Webhook } from 'lucide-react'
 import { useState } from 'react'
 import { api, isActive, type ContainerState, type Deployment, type Project } from '@/lib/api'
 import { duration, timeAgo, useAsync } from '@/lib/hooks'
 import { projectLinks } from '@/lib/links'
 import { Link, navigate } from '@/lib/router'
-import { Button, Card, Dot, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui'
+import { Button, Card, Dialog, Dot, ErrorBox, PageHeader, Spinner, StatusBadge } from '@/components/ui'
+import { isLockedTo, nodeLock, runningNodes, toInput, withLock } from '@/lib/placement'
 import { repoLabel } from './ProjectsPage'
 
 export function ProjectPage({ id }: { id: string }) {
@@ -13,6 +14,7 @@ export function ProjectPage({ id }: { id: string }) {
   const container = useAsync(() => api.container(id), [id], 5000)
   const [busy, setBusy] = useState('')
   const [actionError, setActionError] = useState('')
+  const [lockNode, setLockNode] = useState('')
 
   const act = async (name: string, fn: () => Promise<unknown>) => {
     setBusy(name)
@@ -77,6 +79,27 @@ export function ProjectPage({ id }: { id: string }) {
         <ErrorBox>{actionError}</ErrorBox>
       </div>
 
+      <Dialog
+        open={!!lockNode}
+        title={`Lock to ${lockNode}?`}
+        icon={<Lock className="size-4 text-muted" />}
+        confirmLabel="Lock"
+        onCancel={() => setLockNode('')}
+        onConfirm={() => {
+          const node = lockNode
+          setLockNode('')
+          act('lock', async () => setProject(await api.updateProject(id, { ...toInput(project), placement: withLock(project.placement, node) })))
+        }}
+      >
+        <p>
+          Adds <span className="font-mono text-fg">{nodeLock(lockNode)}</span> to the placement constraints (replacing any other node lock). It
+          applies from the next deployment.
+        </p>
+        <p>
+          The node must carry the <span className="font-mono">node_name={lockNode}</span> label, or the service can't be scheduled anywhere.
+        </p>
+      </Dialog>
+
       <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-5">
           <Card title="Deployments" actions={<span className="text-xs text-muted">last 50</span>}>
@@ -95,7 +118,14 @@ export function ProjectPage({ id }: { id: string }) {
         </div>
 
         <div className="space-y-5">
-          <ContainerCard state={container.data} error={container.error} busy={busy} project={project} onAction={(a) => act(a, async () => container.setData(await api.containerAction(id, a)))} />
+          <ContainerCard
+            state={container.data}
+            error={container.error}
+            busy={busy}
+            project={project}
+            onAction={(a) => act(a, async () => container.setData(await api.containerAction(id, a)))}
+            onLock={setLockNode}
+          />
           {project.buildType === 'netlify' && (
             <Card
               title={
@@ -180,12 +210,14 @@ function ContainerCard({
   busy,
   project,
   onAction,
+  onLock,
 }: {
   state?: ContainerState
   error?: string
   busy: string
   project: Project
   onAction: (a: 'start' | 'stop' | 'restart') => void
+  onLock: (node: string) => void
 }) {
   const swarm = state?.mode === 'swarm'
   return (
@@ -199,6 +231,7 @@ function ContainerCard({
       ) : (
         <div className="space-y-3 text-sm">
           {swarm ? <SwarmSummary state={state} /> : <ContainerSummary state={state} project={project} />}
+          {swarm && <NodeLock state={state} project={project} busy={busy === 'lock'} onLock={onLock} />}
           {project.network && (
             <p className="text-xs">
               <span className="text-muted">Network </span>
@@ -307,6 +340,31 @@ function SwarmSummary({ state }: { state: ContainerState }) {
         </p>
       ))}
     </>
+  )
+}
+
+/** Shows the node lock, or offers to lock to the node(s) running the service. */
+function NodeLock({ state, project, busy, onLock }: { state: ContainerState; project: Project; busy: boolean; onLock: (node: string) => void }) {
+  const nodes = runningNodes(state)
+  const locked = project.placement.find((c) => /^\s*node\.labels\.node_name\s*==/.test(c))
+  const lockedNode = locked?.split('==')[1]?.trim()
+  const pending = lockedNode && nodes.length > 0 && !nodes.includes(lockedNode)
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      {lockedNode && (
+        <span className="inline-flex items-center gap-1 text-muted" title={locked}>
+          <Lock className="size-3.5" /> Locked to <span className="font-mono text-fg">{lockedNode}</span>
+          {pending && ' · applies on next deploy'}
+        </span>
+      )}
+      {nodes
+        .filter((n) => !isLockedTo(project.placement, n))
+        .map((n) => (
+          <Button key={n} size="sm" icon={<Lock className="size-3.5" />} loading={busy} onClick={() => onLock(n)}>
+            Lock to {n}
+          </Button>
+        ))}
+    </div>
   )
 }
 
