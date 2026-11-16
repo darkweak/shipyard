@@ -1,10 +1,10 @@
 import clsx from 'clsx'
-import { ArrowLeft, ChevronRight, Database, Download, File, Folder, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ChevronRight, Database, Download, File, Folder, Pencil, RefreshCw, Save, Search, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { api, type Blob as BlobEntry, type BlobStore } from '@/lib/api'
 import { timeAgo, useAsync } from '@/lib/hooks'
 import { Link } from '@/lib/router'
-import { Button, Card, Empty, ErrorBox, Input, PageHeader, Spinner } from '@/components/ui'
+import { Button, Card, CodeArea, Dialog, Empty, ErrorBox, Input, PageHeader, Spinner } from '@/components/ui'
 
 /** Largest blob previewed inline; bigger ones are download-only. */
 const PREVIEW_MAX = 1 << 20
@@ -144,6 +144,7 @@ export function BlobsPage({ id }: { id: string }) {
                 blob={store.blobs.find((b) => b.key === selected)!}
                 deleting={busy === 'delete:' + selected}
                 onDelete={() => deleteBlob(selected)}
+                onSaved={blobs.reload}
               />
             )}
           </div>
@@ -310,7 +311,7 @@ function BlobBrowser({
   )
 }
 
-type Preview = { kind: 'text'; text: string; json: boolean } | { kind: 'image'; url: string } | { kind: 'binary'; hex: string }
+type Preview = { kind: 'text'; text: string; raw: string; json: boolean } | { kind: 'image'; url: string } | { kind: 'binary'; hex: string }
 
 async function loadPreview(url: string): Promise<Preview> {
   const res = await fetch(url, { credentials: 'same-origin' })
@@ -324,9 +325,9 @@ async function loadPreview(url: string): Promise<Preview> {
   try {
     const text = new TextDecoder('utf-8', { fatal: true }).decode(buf)
     try {
-      return { kind: 'text', text: JSON.stringify(JSON.parse(text), null, 2), json: true }
+      return { kind: 'text', text: JSON.stringify(JSON.parse(text), null, 2), raw: text, json: true }
     } catch {
-      return { kind: 'text', text, json: false }
+      return { kind: 'text', text, raw: text, json: false }
     }
   } catch {
     const bytes = [...new Uint8Array(buf.slice(0, 512))]
@@ -341,10 +342,68 @@ async function loadPreview(url: string): Promise<Preview> {
   }
 }
 
-function BlobDetail({ projectId, store, blob, deleting, onDelete }: { projectId: string; store: string; blob: BlobEntry; deleting: boolean; onDelete: () => void }) {
+function isJSON(s: string) {
+  try {
+    JSON.parse(s)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function BlobDetail({
+  projectId,
+  store,
+  blob,
+  deleting,
+  onDelete,
+  onSaved,
+}: {
+  projectId: string
+  store: string
+  blob: BlobEntry
+  deleting: boolean
+  onDelete: () => void
+  onSaved: () => Promise<unknown>
+}) {
   const url = api.blobUrl(projectId, store, blob.key)
   const previewable = blob.size <= PREVIEW_MAX
   const preview = useAsync(() => (previewable ? loadPreview(url) : Promise.resolve(undefined)), [url, blob.etag])
+  const editable = preview.data?.kind === 'text'
+
+  // Edit mode starts from the raw content and the ETag it was loaded with, so
+  // a save never silently overwrites a write made in the meantime.
+  const [confirming, setConfirming] = useState(false)
+  const [edit, setEdit] = useState<{ draft: string; original: string; etag: string; json: boolean }>()
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const dirty = !!edit && edit.draft !== edit.original
+
+  const startEditing = () => {
+    setConfirming(false)
+    if (preview.data?.kind !== 'text') return
+    setEdit({ draft: preview.data.raw, original: preview.data.raw, etag: blob.etag, json: preview.data.json })
+    setSaveError('')
+  }
+  const stopEditing = () => {
+    if (dirty && !confirm('Discard your changes to this blob?')) return
+    setEdit(undefined)
+    setSaveError('')
+  }
+  const save = async () => {
+    if (!edit) return
+    setSaving(true)
+    setSaveError('')
+    try {
+      await api.putBlob(projectId, store, blob.key, edit.draft, edit.etag)
+      setEdit(undefined)
+      await onSaved()
+    } catch (e) {
+      setSaveError((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   useEffect(() => {
     const p = preview.data
@@ -357,16 +416,46 @@ function BlobDetail({ projectId, store, blob, deleting, onDelete }: { projectId:
     <Card
       title={<span className="font-mono text-xs break-all">{blob.key}</span>}
       actions={
-        <>
-          <a href={url} download className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-panel px-2.5 text-xs font-medium hover:bg-subtle">
-            <Download className="size-3.5" /> Download
-          </a>
-          <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} loading={deleting} onClick={onDelete}>
-            Delete
-          </Button>
-        </>
+        edit ? (
+          <>
+            <Button size="sm" variant="ghost" onClick={stopEditing} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" variant="primary" icon={<Save className="size-3.5" />} loading={saving} disabled={!dirty} onClick={save}>
+              Save
+            </Button>
+          </>
+        ) : (
+          <>
+            {editable && (
+              <Button size="sm" icon={<Pencil className="size-3.5" />} onClick={() => setConfirming(true)}>
+                Edit
+              </Button>
+            )}
+            <a href={url} download className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-panel px-2.5 text-xs font-medium hover:bg-subtle">
+              <Download className="size-3.5" /> Download
+            </a>
+            <Button size="sm" variant="danger" icon={<Trash2 className="size-3.5" />} loading={deleting} onClick={onDelete}>
+              Delete
+            </Button>
+          </>
+        )
       }
     >
+      <Dialog
+        open={confirming}
+        title="Edit this blob?"
+        icon={<AlertTriangle className="size-4 text-amber-500" />}
+        confirmLabel="Enter edit mode"
+        onConfirm={startEditing}
+        onCancel={() => setConfirming(false)}
+      >
+        <p>
+          Saving writes straight to the live blobs volume: the site's functions see the new content immediately. There is no undo, so download the
+          blob first if you may need the current version.
+        </p>
+        <p>If a function writes this blob while you edit, saving fails instead of overwriting its change. Metadata is kept as is.</p>
+      </Dialog>
       <dl className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
         <dt className="text-muted">Size</dt>
         <dd className="font-mono">
@@ -391,7 +480,29 @@ function BlobDetail({ projectId, store, blob, deleting, onDelete }: { projectId:
         Content
         {preview.data?.kind === 'text' && preview.data.json && <span className="ml-2 font-normal text-muted">JSON</span>}
       </h3>
-      {!previewable ? (
+      {edit ? (
+        <div className="space-y-2">
+          <CodeArea
+            rows={Math.min(24, Math.max(8, edit.draft.split('\n').length + 1))}
+            className="max-h-[32rem]"
+            value={edit.draft}
+            onChange={(draft) => setEdit({ ...edit, draft })}
+            autoFocus
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+            <span>
+              {new TextEncoder().encode(edit.draft).length.toLocaleString()} bytes{dirty ? ' · unsaved changes' : ''}
+              {edit.json && !isJSON(edit.draft) && <span className="ml-2 text-amber-600 dark:text-amber-400">⚠ not valid JSON anymore</span>}
+            </span>
+            {edit.json && isJSON(edit.draft) && (
+              <button type="button" className="hover:text-fg hover:underline" onClick={() => setEdit({ ...edit, draft: JSON.stringify(JSON.parse(edit.draft), null, 2) })}>
+                Format JSON
+              </button>
+            )}
+          </div>
+          <ErrorBox>{saveError}</ErrorBox>
+        </div>
+      ) : !previewable ? (
         <p className="text-sm text-muted">Too large to preview ({formatSize(blob.size)}). Download it instead.</p>
       ) : preview.error ? (
         <ErrorBox>{preview.error}</ErrorBox>

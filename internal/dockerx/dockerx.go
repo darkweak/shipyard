@@ -87,6 +87,33 @@ type RunOptions struct {
 	Volumes []string
 	// WorkDir receives the temporary env file (kept out of argv).
 	WorkDir string
+	// Health overrides the image's HEALTHCHECK (nil keeps it as is).
+	Health *Health
+}
+
+// Health configures a container healthcheck. An empty Cmd keeps the image's
+// HEALTHCHECK command and only sets the timings.
+type Health struct {
+	Disable     bool
+	Cmd         string // run with the container's shell
+	Interval    time.Duration
+	Timeout     time.Duration
+	Retries     int
+	StartPeriod time.Duration
+}
+
+func (h *Health) args() []string {
+	if h.Disable {
+		return []string{"--no-healthcheck"}
+	}
+	a := []string{
+		"--health-interval", h.Interval.String(), "--health-timeout", h.Timeout.String(),
+		"--health-retries", strconv.Itoa(h.Retries), "--health-start-period", h.StartPeriod.String(),
+	}
+	if h.Cmd != "" {
+		a = append(a, "--health-cmd", h.Cmd)
+	}
+	return a
 }
 
 func (d *Docker) Run(ctx context.Context, o RunOptions) (string, error) {
@@ -102,6 +129,9 @@ func (d *Docker) Run(ctx context.Context, o RunOptions) (string, error) {
 	}
 	for _, v := range o.Volumes {
 		args = append(args, "-v", v)
+	}
+	if o.Health != nil {
+		args = append(args, o.Health.args()...)
 	}
 	if len(o.Env) > 0 {
 		f := filepath.Join(o.WorkDir, "container.env")
@@ -138,7 +168,15 @@ func (d *Docker) RemoveVolume(ctx context.Context, name string) error {
 // command's stdout to out. It's for poking at a project's volumes with the
 // tools its own image ships.
 func (d *Docker) RunOnce(ctx context.Context, image string, volumes []string, out io.Writer, entrypoint string, args ...string) error {
+	return d.RunOnceIn(ctx, image, volumes, nil, out, entrypoint, args...)
+}
+
+// RunOnceIn is RunOnce with in (when not nil) piped to the command's stdin.
+func (d *Docker) RunOnceIn(ctx context.Context, image string, volumes []string, in io.Reader, out io.Writer, entrypoint string, args ...string) error {
 	a := []string{"run", "--rm", "--network", "none", "--log-driver", "none", "--entrypoint", entrypoint}
+	if in != nil {
+		a = append(a, "--interactive")
+	}
 	for _, v := range volumes {
 		a = append(a, "-v", v)
 	}
@@ -146,7 +184,7 @@ func (d *Docker) RunOnce(ctx context.Context, image string, volumes []string, ou
 	a = append(a, args...)
 	var stderr bytes.Buffer
 	c := d.cmd(ctx, a...)
-	c.Stdout, c.Stderr = out, &stderr
+	c.Stdin, c.Stdout, c.Stderr = in, out, &stderr
 	if err := c.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
@@ -227,6 +265,10 @@ type ContainerState struct {
 	RestartCount int        `json:"restartCount"`
 	StartedAt    *time.Time `json:"startedAt,omitempty"`
 	Ports        []Port     `json:"ports"`
+	// Health is starting, healthy or unhealthy; empty without a healthcheck.
+	Health string `json:"health,omitempty"`
+	// HealthLog is the output of the last failed check.
+	HealthLog string `json:"healthLog,omitempty"`
 }
 
 func (d *Docker) Inspect(ctx context.Context, name string) (*ContainerState, error) {
@@ -247,6 +289,13 @@ func (d *Docker) Inspect(ctx context.Context, name string) (*ContainerState, err
 			Restarting bool
 			ExitCode   int
 			StartedAt  time.Time
+			Health     *struct {
+				Status string
+				Log    []struct {
+					ExitCode int
+					Output   string
+				}
+			}
 		}
 		NetworkSettings struct {
 			Ports map[string][]struct {
@@ -267,6 +316,12 @@ func (d *Docker) Inspect(ctx context.Context, name string) (*ContainerState, err
 	if !r.State.StartedAt.IsZero() {
 		t := r.State.StartedAt
 		st.StartedAt = &t
+	}
+	if h := r.State.Health; h != nil {
+		st.Health = h.Status
+		if n := len(h.Log); n > 0 && h.Log[n-1].ExitCode != 0 {
+			st.HealthLog = strings.TrimSpace(h.Log[n-1].Output)
+		}
 	}
 	for cp, bindings := range r.NetworkSettings.Ports {
 		for _, b := range bindings {

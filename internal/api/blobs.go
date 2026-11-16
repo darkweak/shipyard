@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"path"
@@ -85,6 +87,39 @@ func (s *Server) blobContent(w http.ResponseWriter, r *http.Request) {
 		// Headers are sent: a failure mid-stream can only cut the response.
 	case errors.Is(err, deploy.ErrBlobNotFound):
 		writeError(w, http.StatusNotFound, "blob not found")
+	case deploy.IsNoBlobs(err):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusBadGateway, err.Error())
+	}
+}
+
+// putBlob replaces a blob's content with the raw request body. An If-Match
+// header (the ETag the editor loaded) guards against overwriting a newer write.
+func (s *Server) putBlob(w http.ResponseWriter, r *http.Request) {
+	p, err := s.Store.GetProject(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	q := r.URL.Query()
+	if q.Get("store") == "" || q.Get("key") == "" {
+		writeError(w, http.StatusBadRequest, "store and key are required")
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, deploy.BlobMaxSize))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("blobs are limited to %d MB", deploy.BlobMaxSize>>20))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	b, err := s.Deploy.PutBlob(ctx, p, q.Get("store"), q.Get("key"), data, r.Header.Get("If-Match"))
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, b)
+	case errors.Is(err, deploy.ErrBlobChanged):
+		writeError(w, http.StatusPreconditionFailed, "The blob changed since you opened it (a function wrote to it?). Reload it and edit again.")
 	case deploy.IsNoBlobs(err):
 		writeError(w, http.StatusConflict, err.Error())
 	default:

@@ -31,20 +31,25 @@ type projectInput struct {
 	AuthType     string `json:"authType"`
 	AuthUsername string `json:"authUsername"`
 	// AuthSecret left empty on update keeps the stored secret.
-	AuthSecret     string            `json:"authSecret"`
-	BuildType      string            `json:"buildType"`
-	TemplateID     string            `json:"templateId"`
-	TemplateVars   map[string]string `json:"templateVars"`
-	DockerfilePath string            `json:"dockerfilePath"`
-	BuildContext   string            `json:"buildContext"`
-	ContainerPort  int               `json:"containerPort"`
-	HostPort       int               `json:"hostPort"`
-	Env            map[string]string `json:"env"`
-	Network        string            `json:"network"`
-	Labels         map[string]string `json:"labels"`
-	Replicas       *int              `json:"replicas"`
-	Placement      []string          `json:"placement"`
+	AuthSecret      string            `json:"authSecret"`
+	BuildType       string            `json:"buildType"`
+	TemplateID      string            `json:"templateId"`
+	TemplateVars    map[string]string `json:"templateVars"`
+	DockerfilePath  string            `json:"dockerfilePath"`
+	BuildContext    string            `json:"buildContext"`
+	ContainerPort   int               `json:"containerPort"`
+	HostPort        int               `json:"hostPort"`
+	Env             map[string]string `json:"env"`
+	Network         string            `json:"network"`
+	Labels          map[string]string `json:"labels"`
+	Replicas        *int              `json:"replicas"`
+	Placement       []string          `json:"placement"`
+	Healthcheck     bool              `json:"healthcheck"`
+	HealthcheckPath string            `json:"healthcheckPath"`
 }
+
+// healthPath keeps healthcheck paths shell- and compose-safe (no quotes, $, spaces).
+var healthPath = regexp.MustCompile(`^/[A-Za-z0-9._~%/?=&+,:@-]*$`)
 
 // apply validates the input and copies it onto p.
 func (s *Server) apply(ctx context.Context, in projectInput, p *store.Project) error {
@@ -156,6 +161,13 @@ func (s *Server) apply(ctx context.Context, in projectInput, p *store.Project) e
 		}
 		placement = append(placement, c)
 	}
+	in.HealthcheckPath = strings.TrimSpace(in.HealthcheckPath)
+	if in.HealthcheckPath == "" {
+		in.HealthcheckPath = "/"
+	}
+	if !healthPath.MatchString(in.HealthcheckPath) || len(in.HealthcheckPath) > 512 {
+		return fmt.Errorf("invalid healthcheck path %q (e.g. /healthz)", in.HealthcheckPath)
+	}
 	if in.HostPort > 0 {
 		all, err := s.Store.ListProjects(ctx)
 		if err != nil {
@@ -175,6 +187,7 @@ func (s *Server) apply(ctx context.Context, in projectInput, p *store.Project) e
 	p.ContainerPort, p.HostPort = in.ContainerPort, in.HostPort
 	p.Env, p.Network, p.Labels = in.Env, in.Network, in.Labels
 	p.Replicas, p.Placement = replicas, placement
+	p.Healthcheck, p.HealthcheckPath = in.Healthcheck, in.HealthcheckPath
 	return nil
 }
 

@@ -57,6 +57,8 @@ export type Project = {
   labels: Record<string, string>
   replicas: number
   placement: string[]
+  healthcheck: boolean
+  healthcheckPath: string
   webhookSecret: string
   createdAt: string
   updatedAt: string
@@ -111,13 +113,15 @@ export type ContainerState = {
   restartCount: number
   startedAt?: string
   ports: { containerPort: string; hostIp: string; hostPort: string }[]
+  health?: 'starting' | 'healthy' | 'unhealthy'
+  healthLog?: string
 }
 
 export type SystemInfo = {
   docker: { ok: boolean; version?: string; error?: string }
   target: 'docker' | 'swarm'
   registry: string
-  swarm?: { nodeId: string; nodes: number; managers: number }
+  swarm?: { nodeId: string; hostname: string; nodes: number; managers: number }
 }
 
 export type Blob = { key: string; etag: string; size: number; modified: string; metadata?: Record<string, unknown> }
@@ -213,6 +217,19 @@ export const api = {
   blobs: (id: string) => request<BlobsInfo>('GET', `/api/projects/${id}/blobs`),
   blobUrl: (id: string, store: string, key: string) =>
     `/api/projects/${id}/blobs/content?${new URLSearchParams({ store, key })}`,
+  /** Replaces a blob's content; etag guards against overwriting a newer write (412). */
+  putBlob: async (id: string, store: string, key: string, content: string, etag: string) => {
+    const res = await fetch(`/api/projects/${id}/blobs/content?${new URLSearchParams({ store, key })}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', 'If-Match': etag },
+      body: content,
+      credentials: 'same-origin',
+    })
+    if (res.status === 401) onUnauthorized()
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new ApiError(res.status, data.error ?? res.statusText)
+    return data as Blob
+  },
   deleteBlob: (id: string, store: string, key?: string) =>
     request<void>('DELETE', `/api/projects/${id}/blobs?${new URLSearchParams(key ? { store, key } : { store })}`),
 

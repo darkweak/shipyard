@@ -555,9 +555,11 @@ func (m *Manager) swap(ctx context.Context, r *runner, p *store.Project, contain
 	for k, v := range p.Labels {
 		labels[k] = v
 	}
+	r.logHealth(p, containerPort)
 	id, err := m.docker.Run(ctx, dockerx.RunOptions{
 		Name: name, Image: r.d.Image, HostPort: p.HostPort, ContainerPort: containerPort,
-		Network: p.Network, Env: p.Env, Labels: labels, Volumes: volumes(p), WorkDir: dir,
+		Network: p.Network, Env: runtimeEnv(p), Labels: labels, Volumes: volumes(p), WorkDir: dir,
+		Health: containerHealth(p, containerPort),
 	})
 	if err != nil {
 		return "", restore(err)
@@ -573,14 +575,24 @@ func (m *Manager) swap(ctx context.Context, r *runner, p *store.Project, contain
 	if err != nil {
 		return "", restore(err)
 	}
-	if !st.Running || st.Restarting || st.RestartCount > 0 {
+	containerLogs := func() {
 		if logs, err := m.docker.Logs(ctx, name, 50); err == nil && logs != "" {
 			r.line("Container output:")
 			for _, l := range strings.Split(strings.TrimRight(logs, "\n"), "\n") {
 				r.line("  │ " + l)
 			}
 		}
+	}
+	if !st.Running || st.Restarting || st.RestartCount > 0 {
+		containerLogs()
 		return "", restore(fmt.Errorf("container is not running (state %s, exit code %d)", st.State, st.ExitCode))
+	}
+	if p.Healthcheck && st.Health == "" {
+		r.line("⚠ The image has no healthcheck to run (built before healthchecks were supported?): redeploy from a new build")
+	}
+	if err := m.waitHealthy(ctx, r, name); err != nil {
+		containerLogs()
+		return "", restore(err)
 	}
 	if old.Exists {
 		_ = m.docker.Remove(ctx, prev)

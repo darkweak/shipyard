@@ -227,15 +227,31 @@ function ContainerCard({
 }
 
 function ContainerSummary({ state, project }: { state: ContainerState; project: Project }) {
-  const tone = state.running && !state.restarting ? 'green' : state.restarting ? 'amber' : 'red'
+  const unhealthy = state.running && state.health === 'unhealthy'
+  const tone = state.running && !state.restarting && !unhealthy ? 'green' : state.restarting || unhealthy ? 'amber' : 'red'
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Dot tone={tone} />
         <span className="font-medium">{state.restarting ? 'restarting' : state.state}</span>
+        {state.running && state.health && (
+          <span
+            title={state.healthLog || undefined}
+            className={
+              state.health === 'healthy'
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : state.health === 'unhealthy'
+                  ? 'text-red-600 dark:text-red-400'
+                  : 'text-muted'
+            }
+          >
+            · {state.health}
+          </span>
+        )}
         {state.running && <span className="text-muted">· up since {timeAgo(state.startedAt)}</span>}
         {!state.running && state.exitCode !== 0 && <span className="text-muted">· exit {state.exitCode}</span>}
       </div>
+      {unhealthy && state.healthLog && <p className="truncate font-mono text-xs text-red-600 dark:text-red-400">{state.healthLog}</p>}
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         <dt className="text-muted">Name</dt>
         <dd className="truncate font-mono">shipyard-{project.slug}</dd>

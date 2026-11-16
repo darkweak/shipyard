@@ -659,6 +659,7 @@ COPY --from=server /netlify-server /netlify-server
 COPY --from=build /out /site
 COPY ` + Dir + `/netlify.json /netlify.json
 `)
+		b.WriteString(healthcheckLine("/netlify-server"))
 		fmt.Fprintf(&b, "EXPOSE %d\nENTRYPOINT [\"/netlify-server\", \"-addr\", \":%d\", \"-root\", \"/site\", \"-config\", \"/netlify.json\"]\n", ServerPort, ServerPort)
 		return b.String()
 	}
@@ -674,8 +675,19 @@ WORKDIR /app
 `)
 	fmt.Fprintf(&b, "ENV NODE_ENV=production NETLIFY=true CONTEXT=production SITE_NAME=%s BRANCH=%s COMMIT_REF=%s DEPLOY_ID=%s BUILD_ID=%s\n",
 		strconv.Quote(meta.SiteName), strconv.Quote(meta.Branch), strconv.Quote(meta.Commit), strconv.Quote(meta.DeployID), strconv.Quote(meta.DeployID))
+	b.WriteString(healthcheckLine("/usr/local/bin/netlify-server"))
 	fmt.Fprintf(&b, "USER node\nEXPOSE %d\nENTRYPOINT [\"netlify-server\", \"-addr\", \":%d\", \"-root\", \"/site\", \"-config\", \"/netlify.json\", \"-functions\", \"/app/.netlify-functions/runtime.mjs\", \"-blobs\", %q]\n", ServerPort, ServerPort, BlobsDir)
 	return b.String()
+}
+
+// HealthPathEnv is the path netlify-server -healthcheck probes ("/" if unset).
+const HealthPathEnv = "SHIPYARD_HEALTHCHECK_PATH"
+
+// healthcheckLine bakes the server's own probe into the image, in exec form
+// since the static image has no shell. Shipyard disables it at run time
+// unless the project opts in, and sets the timings itself.
+func healthcheckLine(bin string) string {
+	return fmt.Sprintf("HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 CMD [%q, \"-healthcheck\", \"-addr\", \":%d\"]\n", bin, ServerPort)
 }
 
 // esbuildTarget maps the site's Node.js version to an esbuild target.

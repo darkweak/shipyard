@@ -37,6 +37,7 @@ type stackService struct {
 	Networks    []string          `json:"networks,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Volumes     []string          `json:"volumes,omitempty"`
+	Healthcheck *stackHealthcheck `json:"healthcheck,omitempty"`
 	Deploy      stackDeploy       `json:"deploy"`
 }
 
@@ -101,7 +102,8 @@ func escapeMap(m map[string]string) map[string]string {
 func (m *Manager) stackFile(p *store.Project, image, deploymentID string, containerPort int) stackFile {
 	svc := stackService{
 		Image:       image,
-		Environment: escapeMap(p.Env),
+		Environment: escapeMap(runtimeEnv(p)),
+		Healthcheck: stackHealth(p, containerPort),
 		Deploy: stackDeploy{
 			Mode:     "replicated",
 			Replicas: p.Replicas,
@@ -176,6 +178,7 @@ func (m *Manager) deployStack(ctx context.Context, r *runner, p *store.Project, 
 		return "", err
 	}
 	r.logf("Service %s: %d replica(s), rolling update (start-first, automatic rollback)", name, p.Replicas)
+	r.logHealth(p, containerPort)
 	lw := logstream.NewLineWriter(r.line)
 	err = m.docker.StackDeploy(ctx, StackName(p), file, lw)
 	lw.Flush()

@@ -16,26 +16,31 @@ type SwarmInfo struct {
 	State    string `json:"state"` // inactive, active, pending…
 	Manager  bool   `json:"manager"`
 	NodeID   string `json:"nodeId"`
+	Hostname string `json:"hostname"` // this node's name (docker info .Name)
 	Nodes    int    `json:"nodes"`
 	Managers int    `json:"managers"`
 }
 
 func (d *Docker) SwarmInfo(ctx context.Context) (*SwarmInfo, error) {
-	out, err := d.output(ctx, "info", "--format", "{{json .Swarm}}")
+	out, err := d.output(ctx, "info", "--format", `{"Swarm":{{json .Swarm}},"Name":{{json .Name}}}`)
 	if err != nil {
 		return nil, err
 	}
 	var raw struct {
-		LocalNodeState   string
-		ControlAvailable bool
-		NodeID           string
-		Nodes            int
-		Managers         int
+		Name  string
+		Swarm struct {
+			LocalNodeState   string
+			ControlAvailable bool
+			NodeID           string
+			Nodes            int
+			Managers         int
+		}
 	}
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return nil, fmt.Errorf("docker info: %w", err)
 	}
-	return &SwarmInfo{State: raw.LocalNodeState, Manager: raw.ControlAvailable, NodeID: raw.NodeID, Nodes: raw.Nodes, Managers: raw.Managers}, nil
+	sw := raw.Swarm
+	return &SwarmInfo{State: sw.LocalNodeState, Manager: sw.ControlAvailable, NodeID: sw.NodeID, Hostname: raw.Name, Nodes: sw.Nodes, Managers: sw.Managers}, nil
 }
 
 // Login authenticates the daemon against a registry (password via stdin).

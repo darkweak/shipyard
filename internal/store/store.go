@@ -77,11 +77,14 @@ type Project struct {
 	Network        string            `json:"network"`
 	Labels         map[string]string `json:"labels"`
 	// Replicas and Placement (constraints) apply to Swarm deployments.
-	Replicas      int      `json:"replicas"`
-	Placement     []string `json:"placement"`
-	WebhookSecret string   `json:"webhookSecret"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
+	Replicas  int      `json:"replicas"`
+	Placement []string `json:"placement"`
+	// Healthcheck (opt-in) probes HealthcheckPath on the container port.
+	Healthcheck     bool      `json:"healthcheck"`
+	HealthcheckPath string    `json:"healthcheckPath"`
+	WebhookSecret   string    `json:"webhookSecret"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type Deployment struct {
@@ -187,6 +190,8 @@ func Open(path string) (*Store, error) {
 		{"build_type", "TEXT NOT NULL DEFAULT ''"},
 		{"replicas", "INTEGER NOT NULL DEFAULT 1"},
 		{"placement", "TEXT NOT NULL DEFAULT '[]'"},
+		{"healthcheck", "INTEGER NOT NULL DEFAULT 0"},
+		{"healthcheck_path", "TEXT NOT NULL DEFAULT '/'"},
 	} {
 		if err := s.addColumn("projects", c[0], c[1]); err != nil {
 			db.Close()
@@ -335,7 +340,7 @@ func (s *Store) DeleteTemplate(ctx context.Context, id string) error {
 
 const projectCols = `id, name, slug, repo_url, branch, auth_type, auth_username, auth_secret, build_type, template_id,
 	template_vars, dockerfile_path, build_context, container_port, host_port, env, network, labels,
-	replicas, placement, webhook_secret, created_at, updated_at`
+	replicas, placement, healthcheck, healthcheck_path, webhook_secret, created_at, updated_at`
 
 func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	var p Project
@@ -343,7 +348,7 @@ func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	var created, updated int64
 	if err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.RepoURL, &p.Branch, &p.AuthType, &p.AuthUsername,
 		&p.AuthSecret, &p.BuildType, &p.TemplateID, &vars, &p.DockerfilePath, &p.BuildContext, &p.ContainerPort,
-		&p.HostPort, &env, &p.Network, &labels, &p.Replicas, &placement, &p.WebhookSecret, &created, &updated); err != nil {
+		&p.HostPort, &env, &p.Network, &labels, &p.Replicas, &placement, &p.Healthcheck, &p.HealthcheckPath, &p.WebhookSecret, &created, &updated); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -409,10 +414,11 @@ func (s *Store) CreateProject(ctx context.Context, p *Project) error {
 	}
 	now := time.Now()
 	p.CreatedAt, p.UpdatedAt = now, now
-	_, err := s.db.ExecContext(ctx, `INSERT INTO projects(`+projectCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO projects(`+projectCols+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.Slug, p.RepoURL, p.Branch, p.AuthType, p.AuthUsername, p.AuthSecret, p.BuildType, p.TemplateID,
 		marshalMap(p.TemplateVars), p.DockerfilePath, p.BuildContext, p.ContainerPort, p.HostPort,
-		marshalMap(p.Env), p.Network, marshalMap(p.Labels), p.Replicas, marshalList(p.Placement), p.WebhookSecret, millis(now), millis(now))
+		marshalMap(p.Env), p.Network, marshalMap(p.Labels), p.Replicas, marshalList(p.Placement),
+		p.Healthcheck, p.HealthcheckPath, p.WebhookSecret, millis(now), millis(now))
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return fmt.Errorf("%w: a project with slug %q already exists", ErrConflict, p.Slug)
 	}
@@ -424,10 +430,11 @@ func (s *Store) UpdateProject(ctx context.Context, p *Project) error {
 	p.UpdatedAt = time.Now()
 	res, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, repo_url=?, branch=?, auth_type=?,
 		auth_username=?, auth_secret=?, build_type=?, template_id=?, template_vars=?, dockerfile_path=?, build_context=?,
-		container_port=?, host_port=?, env=?, network=?, labels=?, replicas=?, placement=?, webhook_secret=?, updated_at=? WHERE id=?`,
+		container_port=?, host_port=?, env=?, network=?, labels=?, replicas=?, placement=?, healthcheck=?, healthcheck_path=?, webhook_secret=?, updated_at=? WHERE id=?`,
 		p.Name, p.RepoURL, p.Branch, p.AuthType, p.AuthUsername, p.AuthSecret, p.BuildType, p.TemplateID,
 		marshalMap(p.TemplateVars), p.DockerfilePath, p.BuildContext, p.ContainerPort, p.HostPort,
-		marshalMap(p.Env), p.Network, marshalMap(p.Labels), p.Replicas, marshalList(p.Placement), p.WebhookSecret, millis(p.UpdatedAt), p.ID)
+		marshalMap(p.Env), p.Network, marshalMap(p.Labels), p.Replicas, marshalList(p.Placement),
+		p.Healthcheck, p.HealthcheckPath, p.WebhookSecret, millis(p.UpdatedAt), p.ID)
 	p.HasAuthSecret = p.AuthSecret != ""
 	return affected(res, err)
 }

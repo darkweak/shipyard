@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { Loader2, Plus, Trash2 } from 'lucide-react'
-import type { ButtonHTMLAttributes, ComponentProps, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react'
+import { useEffect, useRef, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import type { DeploymentStatus } from '@/lib/api'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
@@ -165,6 +165,62 @@ export function Empty({ icon, title, children }: { icon: ReactNode; title: strin
       <p className="font-medium">{title}</p>
       {children && <div className="mt-1 text-sm text-muted">{children}</div>}
     </div>
+  )
+}
+
+/** Modal confirmation built on <dialog>: Escape and the backdrop cancel. */
+export function Dialog({
+  open,
+  title,
+  icon,
+  children,
+  confirmLabel,
+  confirmVariant = 'primary',
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean
+  title: ReactNode
+  icon?: ReactNode
+  children: ReactNode
+  confirmLabel: string
+  confirmVariant?: Variant
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const d = ref.current
+    if (!d) return
+    if (open && !d.open) d.showModal()
+    if (!open && d.open) d.close()
+  }, [open])
+  return (
+    <dialog
+      ref={ref}
+      onCancel={(e) => {
+        e.preventDefault()
+        onCancel()
+      }}
+      onClick={(e) => e.target === e.currentTarget && onCancel()}
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-border bg-panel p-0 text-fg shadow-xl backdrop:bg-black/40"
+    >
+      <div className="p-5">
+        <h2 className="mb-2 flex items-center gap-2 text-base font-semibold">
+          {icon}
+          {title}
+        </h2>
+        <div className="space-y-2 text-sm text-muted">{children}</div>
+      </div>
+      <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" variant={confirmVariant} onClick={onConfirm} autoFocus>
+          {confirmLabel}
+        </Button>
+      </div>
+    </dialog>
   )
 }
 

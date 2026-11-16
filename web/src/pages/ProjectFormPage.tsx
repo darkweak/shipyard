@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AlertTriangle, CheckCircle2, FileCode2, FolderGit2, FolderOpen, Globe, KeyRound, PlugZap, Sparkles, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Lock, FileCode2, FolderGit2, FolderOpen, Globe, KeyRound, PlugZap, Sparkles, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { DirPicker, RepoPicker } from '@/components/pickers'
 import { api, type AuthType, type BuildType, type GitHubRepo, type Inspection, type RepoRequest, type NetlifyPlan, type Project, type ProjectInput, type Template } from '@/lib/api'
@@ -28,6 +28,8 @@ const blank: Form = {
   labels: [],
   replicas: 1,
   placement: [],
+  healthcheck: false,
+  healthcheckPath: '/',
 }
 
 const fromProject = (p: Project): Form => ({
@@ -49,6 +51,8 @@ const fromProject = (p: Project): Form => ({
   labels: toRows(p.labels),
   replicas: p.replicas,
   placement: p.placement ?? [],
+  healthcheck: p.healthcheck ?? false,
+  healthcheckPath: p.healthcheckPath || '/',
 })
 
 const isSSH = (url: string) => url.startsWith('ssh://') || /^[\w.-]+@[\w.-]+:/.test(url)
@@ -58,6 +62,9 @@ export function ProjectFormPage({ id }: { id?: string }) {
   const { data: templates } = useAsync(api.templates, [])
   const { data: sys } = useAsync(api.system, [])
   const swarm = sys?.target === 'swarm'
+  // Pins the service to the node Shipyard deploys from.
+  const serverName = sys?.swarm?.hostname ?? ''
+  const lockConstraint = serverName ? `node.labels.node_name == ${serverName}` : ''
   const { data: project, error: loadError } = useAsync(() => (id ? api.project(id) : Promise.resolve(undefined)), [id])
   const [form, setForm] = useState<Form>(blank)
   const [error, setError] = useState('')
@@ -182,7 +189,27 @@ export function ProjectFormPage({ id }: { id?: string }) {
               <Field label="Replicas" hint="Rolling updates, start-first.">
                 <Input type="number" min={0} max={100} value={form.replicas} onChange={(e) => set('replicas', Number(e.target.value))} />
               </Field>
-              <Field label="Placement constraints" hint="One per line, e.g. node.labels.web == true or node.role == worker.">
+              <Field
+                label="Placement constraints"
+                hint={
+                  <span className="flex flex-wrap items-center justify-between gap-2">
+                    <span>One per line, e.g. node.labels.web == true or node.role == worker.</span>
+                    {lockConstraint && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        icon={<Lock className="size-3.5" />}
+                        disabled={form.placement.some((c) => c.replace(/\s+/g, '') === lockConstraint.replace(/\s+/g, ''))}
+                        title={`Adds ${lockConstraint}`}
+                        onClick={() => set('placement', [...form.placement.filter((c) => !/^\s*node\.labels\.node_name\s*==/.test(c) && c.trim()), lockConstraint])}
+                      >
+                        Lock to {serverName}
+                      </Button>
+                    )}
+                  </span>
+                }
+              >
                 <Textarea
                   rows={2}
                   className="font-mono text-xs"
@@ -193,6 +220,36 @@ export function ProjectFormPage({ id }: { id?: string }) {
               </Field>
             </div>
           )}
+          <div className="space-y-3">
+            <label className="flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-accent"
+                checked={form.healthcheck}
+                onChange={(e) => set('healthcheck', e.target.checked)}
+              />
+              <span>
+                <span className="block text-sm font-medium">Healthcheck</span>
+                <span className="block text-xs text-muted">
+                  Docker requests the path below on the container port every 10s; 3 failures in a row mark it unhealthy.
+                  {swarm ? ' Swarm replaces unhealthy tasks, and rolls updates back if new tasks never get healthy.' : ' A deployment whose new container never gets healthy is rolled back.'}
+                </span>
+              </span>
+            </label>
+            {form.healthcheck && (
+              <Field
+                label="Healthcheck path"
+                className="pl-6.5"
+                hint={
+                  form.buildType === 'netlify'
+                    ? 'Any status below 400 is healthy. Uses the image\'s built-in probe: redeploy from a new build if the image predates it.'
+                    : `Any status below 400 is healthy. Runs wget, curl or node inside the container: the image must ship one of them${!form.containerPort && !template ? ', and the container port must be set' : ''}.`
+                }
+              >
+                <Input className="max-w-sm font-mono text-xs" value={form.healthcheckPath} onChange={(e) => set('healthcheckPath', e.target.value)} placeholder="/healthz" />
+              </Field>
+            )}
+          </div>
           <div>
             <p className="mb-2 text-sm font-medium">Environment variables</p>
             <KeyValueEditor rows={form.env} onChange={(r) => set('env', r)} keyPlaceholder="DATABASE_URL" />

@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/projects/{id}/container/logs", s.containerLogs)
 	api.HandleFunc("GET /api/projects/{id}/blobs", s.listBlobs)
 	api.HandleFunc("GET /api/projects/{id}/blobs/content", s.blobContent)
+	api.HandleFunc("PUT /api/projects/{id}/blobs/content", s.putBlob)
 	api.HandleFunc("DELETE /api/projects/{id}/blobs", s.deleteBlob)
 
 	api.HandleFunc("GET /api/deployments/{id}", s.getDeployment)

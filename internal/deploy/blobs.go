@@ -229,6 +229,69 @@ func (m *Manager) DeleteBlob(ctx context.Context, p *store.Project, storeName, k
 	return m.docker.RunOnce(ctx, image, m.blobsMount(p, false), io.Discard, "rm", args...)
 }
 
+// ErrBlobChanged is returned by PutBlob when the blob's ETag no longer matches.
+var ErrBlobChanged = errors.New("the blob changed since it was loaded")
+
+// BlobMaxSize matches the netlify-server's limit on blob writes.
+const BlobMaxSize = 64 << 20
+
+// blobSidecar is the .json file the netlify-server keeps next to each blob.
+type blobSidecar struct {
+	Key      string    `json:"key"`
+	ETag     string    `json:"etag"`
+	Metadata string    `json:"metadata,omitempty"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
+// writeScript replaces a blob atomically: data from stdin, sidecar from $4.
+// Temporary files don't end in .json so listings never pick them up.
+const writeScript = `set -e
+d="$1"; b="$2"
+mkdir -p "$d"
+[ -f "$d/store" ] || printf '%s' "$3" > "$d/store"
+cat > "$d/.tmp-shipyard-data"
+printf '%s' "$4" > "$d/.tmp-shipyard-meta"
+mv -f "$d/.tmp-shipyard-data" "$b.data"
+mv -f "$d/.tmp-shipyard-meta" "$b.json"`
+
+// PutBlob replaces a blob's data, keeping its metadata. With ifMatch set, it
+// fails with ErrBlobChanged unless the current ETag is ifMatch.
+func (m *Manager) PutBlob(ctx context.Context, p *store.Project, storeName, key string, data []byte, ifMatch string) (*Blob, error) {
+	image, err := m.blobsImage(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if storeName == "" || key == "" {
+		return nil, fmt.Errorf("store and key are required")
+	}
+	if len(data) > BlobMaxSize {
+		return nil, fmt.Errorf("blobs are limited to %d MB", BlobMaxSize>>20)
+	}
+	base := blobPath(storeName, key)
+	var cur bytes.Buffer
+	var meta blobSidecar
+	err = m.docker.RunOnce(ctx, image, m.blobsMount(p, true), &cur, "sh", "-c", `[ ! -f "$1" ] || cat "$1"`, "sh", base+".json")
+	if err != nil {
+		return nil, err
+	}
+	exists := cur.Len() > 0 && json.Unmarshal(cur.Bytes(), &meta) == nil
+	if ifMatch != "" && (!exists || meta.ETag != ifMatch) {
+		return nil, ErrBlobChanged
+	}
+
+	sum := sha256.Sum256(data)
+	meta = blobSidecar{Key: key, ETag: `"` + hex.EncodeToString(sum[:16]) + `"`, Metadata: meta.Metadata, Size: int64(len(data)), Modified: time.Now()}
+	sidecar, _ := json.Marshal(meta)
+	dir := netlify.BlobsDir + "/" + blobHash(storeName)
+	err = m.docker.RunOnceIn(ctx, image, m.blobsMount(p, false), bytes.NewReader(data), io.Discard,
+		"sh", "-c", writeScript, "sh", dir, base, storeName, string(sidecar))
+	if err != nil {
+		return nil, err
+	}
+	return &Blob{Key: key, ETag: meta.ETag, Size: meta.Size, Modified: meta.Modified, Metadata: decodeBlobMetadata(meta.Metadata)}, nil
+}
+
 // IsNoBlobs reports whether err means the project has no blobs to browse.
 func IsNoBlobs(err error) bool {
 	var no errNoBlobs

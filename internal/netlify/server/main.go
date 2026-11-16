@@ -9,9 +9,11 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -33,7 +35,12 @@ func main() {
 	node := flag.String("node", "node", "Node.js binary running the functions")
 	fnPort := flag.Int("functions-port", 9999, "loopback port of the functions runtime")
 	blobsDir := flag.String("blobs", "", "Netlify Blobs storage directory for functions (empty: no blobs)")
+	health := flag.Bool("healthcheck", false, "probe the server listening on -addr and exit (Docker HEALTHCHECK)")
 	flag.Parse()
+
+	if *health {
+		os.Exit(probe(*addr, os.Getenv("SHIPYARD_HEALTHCHECK_PATH")))
+	}
 
 	cfg, err := loadConfig(*root, *cfgPath)
 	if err != nil {
@@ -86,6 +93,41 @@ func main() {
 }
 
 const drainDelay = 2 * time.Second
+
+// healthUA marks healthcheck requests, which aren't logged.
+const healthUA = "shipyard-healthcheck"
+
+// probe GETs path on the local server: any status below 400 is healthy.
+func probe(addr, upath string) int {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "8080"
+	}
+	if !strings.HasPrefix(upath, "/") {
+		upath = "/" + upath
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:"+port+upath, nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	req.Header.Set("User-Agent", healthUA)
+	c := &http.Client{
+		Timeout:       4 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	res, err := c.Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	res.Body.Close()
+	if res.StatusCode >= 400 {
+		fmt.Fprintf(os.Stderr, "GET %s: %s\n", upath, res.Status)
+		return 1
+	}
+	return 0
+}
 
 type site struct {
 	root string
@@ -303,6 +345,9 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
+		if r.UserAgent() == healthUA && rec.status < 400 {
+			return
+		}
 		log.Printf("%s %s %d %s", r.Method, r.URL.RequestURI(), rec.status, time.Since(start).Round(time.Microsecond))
 	})
 }
